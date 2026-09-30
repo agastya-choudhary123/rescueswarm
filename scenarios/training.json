@@ -1,0 +1,12 @@
+{
+  "name": "Training Yard",
+  "dimensions": [20, 8, 20],
+  "resolution": 1.0,
+  "drone_count": 2,
+  "time_limit": 120.0,
+  "base": [2.5, 1.5, 2.5],
+  "failures": {"gps_loss_probability": 0.0, "sensor_dropout_probability": 0.0, "comms_dropout_probability": 0.0},
+  "obstacles": [{"min": [7, 0, 6], "max": [11, 4, 10]}, {"min": [13, 0, 12], "max": [17, 6, 16]}],
+  "survivors": [[12.5, 1.5, 5.5], [5.5, 1.5, 15.5]]
+}
+

@@ -1,0 +1,4 @@
+#include "rescueswarm/telemetry/metrics.hpp"
+#include <iomanip>
+#include <ostream>
+namespace rs { void AggregateMetrics::add(const MissionMetrics&m){++missions;completed+=m.completed;coverage_sum+=m.coverage;survivors_found+=m.survivors_found;survivors_total+=m.survivor_count;collisions+=m.collisions;gps_losses+=m.gps_losses;gps_recoveries+=m.gps_recoveries;time_sum+=m.completion_time;} void AggregateMetrics::print(std::ostream&o)const{auto pct=[](double a,double b){return b?100*a/b:0;};o<<std::fixed<<std::setprecision(1)<<"Missions completed:       "<<completed<<'/'<<missions<<'\n'<<"Mean area coverage:       "<<pct(coverage_sum,missions)<<"%\n"<<"Survivors found:          "<<pct(survivors_found,survivors_total)<<"%\n"<<"Collision rate:           "<<pct(collisions,missions)<<"%\n"<<"GPS-loss recovery rate:   "<<pct(gps_recoveries,gps_losses)<<"%\n"<<"Mean completion time:     "<<(missions?time_sum/missions:0)<<" s\n";} }

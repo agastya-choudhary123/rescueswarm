@@ -1,0 +1,3 @@
+#include "rescueswarm/autonomy/autonomy.hpp"
+namespace rs { DroneState nextState(DroneState current,float battery,bool has_path,bool survivor,bool at_base,bool obstacle){if(current==DroneState::Land||current==DroneState::Failed)return current;if(obstacle)return DroneState::AvoidObstacle;if(battery<24.0f)return at_base?DroneState::Land:DroneState::ReturnToBase;if(survivor)return current==DroneState::Investigate?DroneState::ConfirmSurvivor:DroneState::Investigate;if(current==DroneState::Idle)return DroneState::Explore;if(!has_path)return DroneState::Replan;if(current==DroneState::AvoidObstacle||current==DroneState::Replan)return DroneState::Explore;return current;} }
+

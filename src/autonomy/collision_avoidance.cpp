@@ -1,0 +1,3 @@
+#include "rescueswarm/autonomy/autonomy.hpp"
+#include "rescueswarm/planning/voxel_grid.hpp"
+namespace rs { Vec3 collisionAvoidance(const Drone& d,const std::vector<Drone>& peers,const VoxelGrid& truth){Vec3 force=Vec3::Zero();for(auto&p:peers){if(p.id==d.id)continue;Vec3 delta=d.position-p.position;float n=delta.norm();if(n>0.001f&&n<2.2f)force+=delta.normalized()*(2.2f-n)*2.0f;}for(auto&n:truth.neighbors(truth.worldToCell(d.position)))if(n.y()>0&&truth.at(n)==Occupancy::Occupied){Vec3 delta=d.position-truth.cellCenter(n);float len=delta.norm();if(len>0.01f)force+=delta.normalized()*3.0f;}return force; } }
