@@ -1,111 +1,68 @@
-rescueswarm
------------
+# rescueswarm
 
-rescueswarm is a multi-agent search-and-rescue autonomy simulator in C++20.
-Four drones map a collapsed city block they have never seen, split the
-exploration between them, detect and confirm survivors, replan around obstacles
-as they are discovered, budget energy for the flight home, and keep working
-through GPS, sensor and radio failures injected at random.
+A multi-drone search-and-rescue simulator written in C++20. Four drones
+explore a collapsed city block they have no map of. They split the area into
+sectors, find and confirm survivors, replan around obstacles as they discover
+them, and save enough battery to fly home. GPS, sensor, and radio failures are
+injected at random throughout.
 
-The simulator and the renderer are separate targets. The same mission runs as
-an interactive raylib + Dear ImGui visualization, or headless at about 740x
-real time for benchmarking. A fixed seed reproduces a mission exactly, down to
-every detection, failure and task assignment.
+The simulation is a library on its own. It runs either with a raylib + Dear
+ImGui viewer or headless, which is about 740x faster than real time. A given
+seed always reproduces the same mission.
 
-Across 500 seeded missions: 500/500 completed, 100% of survivors found, zero
-missions with a collision, and 95.6% of GPS-loss events recovered.
+Over 500 seeded missions, all 500 finished, every survivor was found, no
+mission had a collision, and drones recovered from 95.6% of GPS outages.
 
-![RescueSwarm live mission](render-final-stable.png)
+![rescueswarm mission](assets/screenshot.png)
 
-### Documentation quick links
+## Building
 
-* [Quick start](#quick-start)
-* [Results](#results)
-* [Autonomy](#autonomy)
-* [Simulation](#simulation)
-* [Failure injection](#failure-injection)
-* [Visualization](#visualization)
-* [Limitations](#limitations)
-* [Tests](#tests)
+You need macOS or Linux, a C++20 compiler, and CMake 3.24+. The dependencies
+are raylib 6, Eigen, nlohmann/json, and Catch2. Dear ImGui and rlImGui are
+included as submodules.
 
-### Requirements
+```sh
+brew install cmake raylib eigen catch2 nlohmann-json   # macOS
 
-macOS or Linux, a C++20 compiler and CMake 3.24+. Depends on raylib 6, Eigen,
-nlohmann/json and Catch2. Dear ImGui and rlImGui are git submodules under
-`third_party/`.
-
-On macOS:
-
-```
-$ brew install cmake raylib eigen catch2 nlohmann-json
+git clone --recursive https://github.com/agastya-choudhary123/rescueswarm
+cd rescueswarm
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+./build/rescueswarm --scenario scenarios/city.json --seed 42
 ```
 
-### Quick start
+If you cloned without `--recursive`, run `git submodule update --init` first.
+On macOS you can also double-click `Launch RescueSwarm.command`.
 
-```
-$ git clone --recursive https://github.com/agastya-choudhary123/rescueswarm
-$ cd rescueswarm
-$ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-$ cmake --build build -j
-$ ./build/rescueswarm --scenario scenarios/city.json --seed 42
-```
+In the viewer, hold the right mouse button and use WASD to move the camera.
+The control panel can pause the sim or change its speed from 0.25x to 8x.
 
-If you cloned without `--recursive`, run `git submodule update --init` before
-building. On macOS you can instead double-click `Launch RescueSwarm.command`,
-which builds if needed and starts the city mission.
+Headless:
 
-The mission starts at 2x simulated time; the control panel pauses it or sets
-anything from 0.25x to 8x. Hold the right mouse button and use WASD to move the
-camera. Camera input only works while the button is held, so an unattended view
-never drifts.
-
-Headless runs use the same `World`, planner, sensors and state machines:
-
-```
-$ ./build/rescueswarm --scenario scenarios/city.json --seed 42 --headless
-$ ./build/rescueswarm --scenario scenarios/city.json --benchmark 500 --headless
+```sh
+./build/rescueswarm --scenario scenarios/city.json --seed 42 --headless
+./build/rescueswarm --scenario scenarios/city.json --benchmark 500 --headless
 ```
 
-### Results
+## Results
 
-Apple M4, release build, 500 consecutive seeds of `scenarios/city.json`:
-
-```
-$ /usr/bin/time -p ./build/rescueswarm \
-      --scenario scenarios/city.json --benchmark 500 --headless
-
-Missions completed:       500/500
-Mean area coverage:       83.8%
-Survivors found:          100.0%
-Collision rate:           0.0%
-GPS-loss recovery rate:   95.6%
-Mean completion time:     103.0 s
-real 69.41
-```
+500 consecutive seeds of `scenarios/city.json`, release build, Apple M4:
 
 | metric | value | definition |
 |---|---:|---|
 | missions completed | 500/500 | every survivor confirmed and no drone lost |
-| survivors found | 100.0% | confirmed survivors / placed survivors |
-| collision rate | 0.0% | missions with at least one collision, not collisions per mission |
-| GPS-loss recovery | 95.6% | GPS outages the drone recovered from before the mission ended |
+| survivors found | 100.0% | confirmed / placed |
+| collision rate | 0.0% | missions with at least one collision |
+| GPS-loss recovery | 95.6% | GPS outages recovered from before the mission ended |
 | area coverage | 83.8% | known free volume / true free volume |
 | mean completion | 103.0 s | simulated time until the team lands |
 
-The 500 runs cover 51,500 seconds of simulated flight in 69.4 s of wall-clock
-time. That is 7.2 complete missions per second, with the engine running about
-740x faster than real time.
+The whole run took 69.4 s of wall-clock time for 51,500 s of simulated
+flight. Headless mode steps the same 30 Hz simulation the viewer uses, and
+the metrics come from the final world state. The `training.json` scenario,
+which has no failures, finishes in 39.5 s with 99.0% coverage.
 
-Nothing is scripted. Every run steps the same 30 Hz simulation the GUI uses
-until the team lands or time runs out, and the metrics are read from the final
-world state. The failure-free `training.json` scenario finishes in 39.5 s with
-99.0% coverage.
-
-### Autonomy
-
-Each drone carries its own kinematic state, mission state, planned path,
-battery budget, sensor and radio health, sector assignment and, optionally, a
-survivor task.
+## How the drones work
 
 ```
                          survivor assigned
@@ -119,144 +76,89 @@ Idle ──► Explore ───────────────► Investig
              └──────── low energy ──► Return to Base ──► Land
 ```
 
-**Exploration.** LiDAR observations update a 3D occupancy grid. A frontier is
-a known-free cell on the operational flight layer next to unknown space. Each
-candidate frontier is scored on:
+**Exploration.** LiDAR updates a 3D occupancy grid. A frontier is a known-free
+cell at flight altitude that sits next to unknown space. Each frontier is
+scored on expected information gain (over a 5x5 neighborhood), A* distance,
+whether it's in the drone's own sector, and how far it is from where
+teammates are heading. Frontiers are limited to flight altitude because an
+earlier version spent most of its time mapping empty sky above the buildings.
+The grid and the planner are still fully 3D.
 
-* expected information gain over a 5 x 5 neighborhood;
-* A* distance from the drone;
-* whether it lies in the drone's assigned sector; and
-* distance from teammates' current targets.
+**Task allocation.** When a survivor is detected, a central allocator assigns
+exactly one drone, picked by travel distance, battery, and radio state. The
+other drones keep working their own sectors. The assigned drone flies a 3D A*
+path, confirms the survivor from within 2.2 m, and goes back to exploring.
 
-Frontiers are limited to the operational layer on purpose. An earlier version
-counted every unknown air voxel as worth exploring and spent most of its search
-budget mapping empty sky above the buildings. The grid and the planner are
-still fully 3D. Only the exploration objective encodes where survivors can
-actually be.
+**Replanning and energy.** As soon as sensing marks the next voxel on a path
+as occupied, the drone brakes and replans. Short-range separation forces keep
+drones away from each other and from buildings. The return-home decision is
+based on the energy needed to get back to base, not a fixed battery
+percentage.
 
-**Task allocation.** When any drone detects a survivor, a central allocator
-picks one eligible drone based on travel distance, remaining battery and radio
-state. The assignment is exclusive, so nearby teammates keep working their
-sectors instead of flying to the same survivor. The chosen drone switches to
-`Investigate`, follows a 3D A* path, confirms the survivor from within 2.2 m,
-and goes back to exploring.
+## Simulation
 
-**Replanning and energy.** A path is invalidated the moment sensing marks its
-next voxel occupied. The drone brakes before entering that cell and replans on
-the updated map, and short-range separation forces keep it clear of teammates
-and structures. The decision to return home uses an energy reserve based on the
-distance to base, not a fixed battery threshold.
+The world advances in fixed 30 Hz steps (`SimulationClock`), so frame rate
+affects how smooth the viewer looks but never changes the results. Drones are
+kinematic, with bounded speed and acceleration. This project is about
+planning and coordination, not flight control.
 
-### Simulation
+| scenario | grid | buildings | drones | survivors | time limit | failures |
+|---|---|---:|---:|---:|---:|---|
+| `city.json` | 40 x 12 x 40, 1 m voxels | 10 | 4 | 4 | 300 s | on |
+| `training.json` | 20 x 8 x 20, 1 m voxels | 2 | 2 | 2 | 120 s | off |
 
-`SimulationClock` accumulates render-frame time and advances the world in fixed
-30 Hz steps. Frame rate therefore changes how smooth the view looks, never the
-trajectories or the results.
-
-Each drone has 3D position, velocity, acceleration and orientation, with
-bounded acceleration and speed. The model is kinematic on purpose: the project
-is about planning, coordination and failure recovery, not tuning a flight
-controller.
-
-Scenarios are JSON files:
-
-| scenario | grid | structures | drones | survivors | failures |
-|---|---|---:|---:|---:|---|
-| `city.json` | 40 x 12 x 40 voxels, 1 m | 10 | 4 | 4 | on |
-| `training.json` | 20 x 8 x 20 voxels, 1 m | 2 | 2 | 2 | off |
-
-Each scenario also sets the base location, a time limit (300 s for the city,
-120 s for training) and per-second failure probabilities. `training.json` is
-the failure-free scenario the correctness tests use.
-
-`rescueswarm_core` does not use any raylib or ImGui types, so tests and
-benchmarks link against it without ever opening a window.
-
-### Failure injection
-
-The city scenario injects three independent failures on every simulation tick:
+Failure rates in the city scenario. Each one is rolled independently on
+every tick, and failed systems come back at random:
 
 | failure | probability / s | effect |
 |---|---:|---|
-| GPS loss | 0.008 | tracked explicitly, counted toward the recovery rate |
-| sensor dropout | 0.004 | no occupancy or survivor observations; current path continues until sensing returns or a known obstacle invalidates it |
-| comms dropout | 0.012 | drone keeps working its sector alone and becomes a costly choice for remotely reported survivors |
+| GPS loss | 0.008 | counted toward the recovery rate |
+| sensor dropout | 0.004 | no new map or survivor observations; the drone keeps following its current path |
+| comms dropout | 0.012 | the drone keeps working its sector alone and becomes a worse pick for new survivors |
 
-Failed subsystems recover at random, so how long an outage lasts differs from
-seed to seed.
+`rescueswarm_core` doesn't depend on raylib or ImGui, so the tests and
+benchmarks never open a window.
 
-### Visualization
+The viewer shows each drone's state, trajectory, and A* waypoints, along with
+survivor markers, LiDAR range, radio links, an optional occupied-voxel
+overlay, and an ImGui panel with battery, task ownership, replans, sensor
+health, and coverage.
 
-The renderer is built to show what the autonomy is doing, not to look
-photorealistic:
+## Limitations
 
-* color-coded quadrotors with state labels, trajectories and A* waypoints;
-* mission targets, survivor pulses and detection beacons;
-* LiDAR range rings and live communication links between drones;
-* procedurally generated buildings, windows, roads and rubble;
-* an optional overlay of occupied voxels; and
-* a Dear ImGui panel with live battery, task ownership, replans, sensor health,
-  coverage and mission progress.
+- All drones share one in-process map. Radio state affects task allocation,
+  but drones don't keep separate maps and merge them later.
+- Survivor detection is range plus a random roll, with no line-of-sight
+  check. LiDAR reveals a sphere of voxels instead of casting rays.
+- A* replans from scratch. D* Lite would be the next step.
+- Buildings are axis-aligned boxes, and there's no wind, rotor dynamics, or
+  debris physics.
+- The benchmark compares seeds, not algorithms. I haven't run comparisons
+  like A* vs. D* Lite because the alternatives don't exist yet.
 
-The default camera frames the whole city and stays put until you take control
-with the right mouse button. Labels are projected from world coordinates after
-the 3D pass, so a drone stays identifiable even when a building partly hides
-it.
+## Tests
 
-### Limitations
-
-Every drone reads the same in-process map. Radio state affects task allocation
-and telemetry, but drones do not keep their own diverging maps or merge them
-after losing contact. A truly distributed allocation experiment needs one
-occupancy map and frontier set per drone.
-
-Survivor detection uses range plus a random chance, with no line of sight, so
-buildings block neither the LiDAR nor the survivor detector. LiDAR reveals a
-sphere of voxels rather than casting individual rays.
-
-A* replans from scratch. D* Lite is the natural next planner, because most
-updates touch only a small part of the voxel graph.
-
-Flight is kinematic, buildings are axis-aligned boxes, and the damage is only
-visual. There are no rotor dynamics, no wind, no debris physics and no contact
-solver.
-
-The benchmark compares seeds, not planners. Comparisons such as A* against
-D* Lite, or centralized against distributed allocation, will only be reported
-once both options exist and run through the same scenario harness.
-
-### Tests
-
-```
-$ ctest --test-dir build --output-on-failure
-
-100% tests passed, 0 tests failed out of 6
+```sh
+ctest --test-dir build --output-on-failure
 ```
 
 | file | checks |
 |---|---|
-| `planner_tests.cpp` | 3D A* routes around occupied voxels; blocked goals are rejected |
-| `state_machine_tests.cpp` | low battery forces return and landing; detections trigger investigation; frontiers stay at operational altitude |
-| `scenario_tests.cpp` | scenarios load, and two worlds with the same seed evolve identically |
+| `planner_tests.cpp` | A* routes around occupied voxels; unreachable goals are rejected |
+| `state_machine_tests.cpp` | low battery forces return and landing; detections trigger investigation; frontiers stay at flight altitude |
+| `scenario_tests.cpp` | scenarios load; two worlds with the same seed evolve identically |
 
-### Layout
+## Layout
 
 ```
-include/rescueswarm/
-  autonomy/       state transitions, frontier scoring, allocation, avoidance
-  planning/       voxel occupancy grid and 3D A*
-  sensors/        LiDAR, GPS and survivor detector interfaces
-  simulation/     world, drones and fixed-step clock
-  telemetry/      mission and aggregate metrics
-  rendering/      renderer interface only
-src/
-  autonomy/       team policy and recovery behavior
-  planning/       search and grid implementations
-  sensors/        noisy sensor models
-  simulation/     headless mission engine
-  rendering/      raylib + Dear ImGui client
-  app/            CLI, benchmark and interactive entry point
-scenarios/        JSON mission definitions
-tests/            Catch2 planner, state-machine and scenario tests
-third_party/      Dear ImGui and rlImGui (submodules)
+include/rescueswarm/   headers: autonomy, planning, sensors, simulation, telemetry, rendering
+src/autonomy/          state machine, frontier scoring, task allocation, collision avoidance
+src/planning/          voxel grid and 3D A*
+src/sensors/           LiDAR, GPS, survivor detector
+src/simulation/        world, drones, fixed-step clock
+src/rendering/         raylib + Dear ImGui viewer
+src/app/main.cpp       CLI entry point
+scenarios/             mission definitions
+tests/                 Catch2 tests
+third_party/           Dear ImGui, rlImGui
 ```
